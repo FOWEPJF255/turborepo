@@ -8,6 +8,9 @@ use turborepo_setup::test_support::{LoopbackServer, OwnedSetupFixture};
 use super::*;
 
 const ENABLED: &str = r#"{"futureFlags":{"experimentalSetup":true}}"#;
+/// For plain setup in fixtures whose Node cannot run pnpm.
+const SKIP_DEPENDENCIES: &str =
+    r#"{"futureFlags":{"experimentalSetup":true},"setup":{"javascript":{"dependencies":"skip"}}}"#;
 fn archive(root: &str, files: &[(&str, &str)]) -> Vec<u8> {
     let mut tar = tar::Builder::new(Vec::new());
     for (path, body) in files {
@@ -254,6 +257,8 @@ mod native_plain_run;
 mod npm;
 #[path = "offline_tests.rs"]
 mod offline_repeat;
+#[path = "pnpm_install_tests.rs"]
+mod pnpm_install;
 #[path = "publication_guards.rs"]
 mod publication_guards;
 #[path = "rustup_tests.rs"]
@@ -324,6 +329,8 @@ fn authoritative_pnpm_keeps_wrong_manager_advisories_in_frozen_local_and_check()
             snapshot.previous_lock().unwrap().canonical_bytes().unwrap(),
         )
         .unwrap();
+        // Plain --check needs the lockfile pnpm would install from.
+        fs::write(f.owned.root().join("pnpm-lock.yaml"), "").unwrap();
         let u = Upstream::new(&f, false, None);
         assert_eq!(f.run(&u, FROZEN).unwrap(), 0);
         let before = publication_guards::state(f.owned.root());
@@ -386,11 +393,14 @@ fn root_policy_and_cli_overrides_select_the_effective_setup() {
     let f = Fixture::new();
     configure(&f, "", r#"{"dependencies":"locked"}"#);
     let u = Upstream::new(&f, false, None);
-    // Locked dependencies reach dependency setup instead of failing as
-    // pending; this fixture's pnpm installer reports itself as skipped.
-    assert_eq!(f.run(&u, &["--frozen"]).unwrap(), 0);
-    assert_eq!(u.hits(), 3);
+    // Locked pnpm dependencies need pnpm-lock.yaml before any download.
+    assert!(matches!(
+        f.run(&u, &["--frozen"]),
+        Err(Error::Dependencies(_))
+    ));
+    assert_eq!(u.hits(), 0);
     assert_eq!(f.run(&u, FROZEN).unwrap(), 0);
+    assert_eq!(u.hits(), 3);
 
     // Preserve the native managed adapters added after the original policy
     // stack. System Rust remains unsupported and must fail before traffic.
@@ -444,7 +454,7 @@ fn unsupported_modes_and_policy_fail_before_traffic_or_storage() {
     ] {
         let f = Fixture::new();
         let u = Upstream::new(&f, false, None);
-        if flags == ["--no-frozen", "--tools-only"] || flags == ["--frozen"] {
+        if flags == ["--no-frozen", "--tools-only"] {
             assert_eq!(f.run(&u, &flags).unwrap(), 0);
             assert_eq!(u.hits(), 3);
         } else if flags == ["--check"] {
@@ -456,8 +466,10 @@ fn unsupported_modes_and_policy_fail_before_traffic_or_storage() {
         } else {
             let result = f.run(&u, &flags);
             match flags.as_slice() {
-                // Plain plans include dependencies (none for pnpm yet).
-                ["--plan"] => assert_eq!(result.unwrap(), 0),
+                // Plain setup and plans need the fixture's missing pnpm-lock.yaml.
+                ["--plan"] | ["--frozen"] => {
+                    assert!(matches!(result, Err(Error::Dependencies(_))));
+                }
                 // Neither can install locked dependencies (#14486, #14518).
                 ["--no-lock"] | ["--frozen", "--offline"] => {
                     assert!(
