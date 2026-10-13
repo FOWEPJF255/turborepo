@@ -128,9 +128,11 @@ fn inspect(
     Ok(lines)
 }
 
+/// Trusted reuse touches no tools; the caller reports dependencies, which
+/// may still install offline from the native caches.
 fn report(lines: Vec<String>) -> i32 {
     println!("{}", lines.join("\n"));
-    println!("No resolution, downloads, writes, probes, or tasks run.");
+    println!("Tools: no resolution, downloads, writes, or probes.");
     0
 }
 
