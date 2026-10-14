@@ -469,19 +469,16 @@ fn run_reporting(
         );
         return Ok(0);
     }
-    let code = if request.lock == LockMode::NoLock && !request.offline {
-        no_lock::run(&discovery, snapshot, transports, preflight)?
+    let provisioned = if request.offline {
+        offline::run(&discovery, snapshot, &request, transports, preflight)
+    } else if request.lock == LockMode::NoLock {
+        no_lock::run(&discovery, snapshot, transports, preflight)
     } else {
-        let provisioned = if request.offline {
-            offline::run(&discovery, snapshot, &request, transports, preflight)?
-        } else {
-            provision::run(&discovery, snapshot, &request, transports, preflight)?
-        };
-        report.downloaded_bytes = provisioned.downloaded_bytes;
-        report.tools_installed = provisioned.installed;
-        report.tools_reused = provisioned.reused;
-        0
-    };
+        provision::run(&discovery, snapshot, &request, transports, preflight)
+    }?;
+    report.downloaded_bytes = provisioned.downloaded_bytes;
+    report.tools_installed = provisioned.installed;
+    report.tools_reused = provisioned.reused;
     println!(
         "Dependencies skipped ({}). No tasks run.",
         if request.tools_only {
@@ -490,7 +487,7 @@ fn run_reporting(
             "dependency installation is not supported yet"
         }
     );
-    Ok(code)
+    Ok(0)
 }
 
 /// `turbo setup --frozen --tools-only` against loopback fixture artifacts,

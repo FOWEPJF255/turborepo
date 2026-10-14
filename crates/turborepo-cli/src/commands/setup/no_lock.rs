@@ -16,7 +16,7 @@ pub(super) fn run(
     snapshot: Snapshot,
     transports: Option<provision::Transports>,
     preflight: impl Fn() -> Result<OfficialSourcePolicy, Error>,
-) -> Result<i32, Error> {
+) -> Result<provision::Provisioned, Error> {
     let platform = provision::platform()?;
     // Name what is missing or unsupported instead of the record's generic
     // rejection; both fail before transports, writers, or Store.
@@ -156,23 +156,33 @@ pub(super) fn run(
             || checked().map_err(Into::into),
         )?;
     }
+    let mut provisioned = provision::Provisioned {
+        downloaded_bytes: prepared_node
+            .as_ref()
+            .map_or(0, |node| node.downloaded_bytes())
+            + prepared_pnpm
+                .as_ref()
+                .map_or(0, |pnpm| pnpm.downloaded_bytes()),
+        ..Default::default()
+    };
     for tool in &desired {
+        let reused = (tool.id == "node" && prepared_node.is_none())
+            || (tool.id == "pnpm" && prepared_pnpm.is_none());
+        if reused {
+            provisioned.reused += 1;
+        } else {
+            provisioned.installed += 1;
+        }
         println!(
             "{} {}: {}",
             tool.id,
             tool.version,
-            if (tool.id == "node" && prepared_node.is_none())
-                || (tool.id == "pnpm" && prepared_pnpm.is_none())
-            {
-                "reused"
-            } else {
-                "installed"
-            }
+            if reused { "reused" } else { "installed" }
         );
     }
     println!(
         "No turbo.lock written (--no-lock). Clone-local selections do not establish cross-machine \
          reproducibility or frozen readiness."
     );
-    Ok(0)
+    Ok(provisioned)
 }
