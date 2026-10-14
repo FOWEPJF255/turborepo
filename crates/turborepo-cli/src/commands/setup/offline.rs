@@ -128,10 +128,14 @@ fn inspect(
     Ok(lines)
 }
 
-fn report(lines: Vec<String>) -> i32 {
+// One line per trusted, reused tool.
+fn report(lines: Vec<String>) -> provision::Provisioned {
     println!("{}", lines.join("\n"));
     println!("No resolution, downloads, writes, probes, or tasks run.");
-    0
+    provision::Provisioned {
+        reused: lines.len(),
+        ..Default::default()
+    }
 }
 
 pub(super) fn run(
@@ -140,7 +144,7 @@ pub(super) fn run(
     request: &super::SetupRequest,
     transports: Option<provision::Transports>,
     preflight: impl Fn() -> Result<OfficialSourcePolicy, SetupError>,
-) -> Result<i32, SetupError> {
+) -> Result<provision::Provisioned, SetupError> {
     let checked = inspect(
         discovery,
         &sources,
@@ -209,5 +213,5 @@ pub(super) fn run(
     }
     // Cache reads above are preflight only. Locked preparation verifies every
     // byte again, and publishes fresh external provenance under both guards.
-    provision::run(discovery, sources, request, Some(transports), preflight).map(|_| 0)
+    provision::run(discovery, sources, request, Some(transports), preflight)
 }
