@@ -430,6 +430,14 @@ pub(super) fn plans(
     })
 }
 
+/// Aggregate results for the caller's report; no paths or versions.
+#[derive(Debug, Default)]
+pub(super) struct Provisioned {
+    pub downloaded_bytes: u64,
+    pub installed: usize,
+    pub reused: usize,
+}
+
 pub(super) fn lock_report(
     previous: Option<&turborepo_setup::lock::Lock>,
     current: &turborepo_setup::lock::Lock,
@@ -523,7 +531,7 @@ pub(super) fn run(
     request: &super::SetupRequest,
     transports: Option<Transports>,
     preflight: impl Fn() -> Result<OfficialSourcePolicy, Error>,
-) -> Result<i32, Error> {
+) -> Result<Provisioned, Error> {
     let (force, offline) = (request.force, request.offline);
     let resolution_mode = if request.update_lock {
         turborepo_setup::lock::reconcile::Mode::Refresh
@@ -1022,6 +1030,18 @@ pub(super) fn run(
     // trusted. On failure, rerunning setup freshly verifies it before repair.
     before_publish()?;
     trust.publish(&store)?;
+    let mut provisioned = Provisioned {
+        downloaded_bytes: prepared_node
+            .as_ref()
+            .map_or(0, |node| node.downloaded_bytes())
+            + prepared_pnpm
+                .as_ref()
+                .map_or(0, |pnpm| pnpm.downloaded_bytes())
+            + prepared_npm
+                .as_ref()
+                .map_or(0, |npm| npm.downloaded_bytes()),
+        ..Provisioned::default()
+    };
     for tool in &desired {
         let (reused, source) = match additional(tool) {
             Some((plan, prepared)) => (prepared.is_none(), format!(" ({})", plan.source())),
@@ -1039,6 +1059,11 @@ pub(super) fn run(
                 String::new(),
             ),
         };
+        if reused {
+            provisioned.reused += 1;
+        } else {
+            provisioned.installed += 1;
+        }
         let from_cache = match tool.id.as_str() {
             "node" => prepared_node.as_ref().is_some_and(|node| node.from_cache()),
             "pnpm" => prepared_pnpm.as_ref().is_some_and(|pnpm| pnpm.from_cache()),
@@ -1076,5 +1101,5 @@ pub(super) fn run(
     if turborepo_setup::writer_storage::outside_git_repository(root)? {
         println!("No Git repository found; skipped checking that .turbo/ is Git-ignored.");
     }
-    Ok(0)
+    Ok(provisioned)
 }
